@@ -22,6 +22,9 @@
 #if defined(NRF_DPPIC)
     #include <hal/nrf_dppi.h>
 #endif
+#if defined(CONFIG_NRFX_QSPI)
+    #include <hal/nrf_qspi.h>
+#endif
 
 #include <string.h>
 
@@ -82,6 +85,18 @@ static NRF_UARTE_Type *nrf_uarte_to_clean[] = {
 static void nrf_cleanup_clock(void)
 {
     nrf_clock_int_disable(NRF_CLOCK, 0xFFFFFFFF);
+}
+#endif
+
+#if defined(CONFIG_MCUBOOT_NRF_CLEANUP_PERIPHERAL_QSPI)
+static void nrf_cleanup_qspi(void)
+{
+    // TODO: Ensure external memory is in known state before swithing it off
+
+    nrf_qspi_int_disable(NRF_QSPI, NRF_QSPI_INT_READY_MASK);
+    nrf_qspi_task_trigger(NRF_QSPI, NRF_QSPI_TASK_DEACTIVATE);
+    nrf_qspi_disable(NRF_QSPI);
+    nrf_qspi_event_clear(NRF_QSPI, NRF_QSPI_EVENT_READY);
 }
 #endif
 
@@ -157,6 +172,11 @@ void nrf_cleanup_peripheral(void)
 #if defined(CONFIG_NRFX_CLOCK)
     nrf_cleanup_clock();
 #endif
+
+#if defined(CONFIG_MCUBOOT_NRF_CLEANUP_PERIPHERAL_QSPI)
+  nrf_cleanup_qspi();
+#endif
+
 }
 
 #if USE_PARTITION_MANAGER \

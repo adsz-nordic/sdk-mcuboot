@@ -42,6 +42,19 @@
 #define NRF_UARTE_PUBLISH_CONF_SIZE (offsetof(NRF_UARTE_Type, SHORTS) -\
                                      NRF_UARTE_PUBLISH_CONF_OFFS)
 
+#if defined(CONFIG_MCUBOOT_NRF_CLEANUP_PERIPHERAL_EXTERNAL_FLASH)
+#define EXT_FLASH DT_CHOSEN(nordic_pm_ext_flash)
+static void cleanup_ext_flash(void)
+{
+  const struct device *const ext_flash = DEVICE_DT_GET(EXT_FLASH);
+  int err = device_deinit(ext_flash);
+  if (err) {
+    // TODO: Implement error handling
+    ;
+  }
+}
+#endif
+
 #if defined(NRF_RTC0) || defined(NRF_RTC1) || defined(NRF_RTC2)
 static inline void nrf_cleanup_rtc(NRF_RTC_Type * rtc_reg)
 {
@@ -157,6 +170,11 @@ void nrf_cleanup_peripheral(void)
 #if defined(CONFIG_NRFX_CLOCK)
     nrf_cleanup_clock();
 #endif
+
+#if defined(CONFIG_MCUBOOT_NRF_CLEANUP_PERIPHERAL_EXTERNAL_FLASH)
+  cleanup_ext_flash();
+#endif
+
 }
 
 #if USE_PARTITION_MANAGER \

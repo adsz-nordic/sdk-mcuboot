@@ -57,6 +57,7 @@
 
 #ifdef __ZEPHYR__
 #include <zephyr/sys/reboot.h>
+#include <zephyr/kernel.h>
 #endif
 
 #if defined(CONFIG_SOC_NRF5340_CPUAPP) && defined(PM_CPUNET_B0N_ADDRESS)
@@ -836,6 +837,8 @@ boot_image_check(struct boot_loader_state *state, struct image_header *hdr,
     int rc;
     FIH_DECLARE(fih_rc, FIH_FAILURE);
 
+    BOOT_LOG_DBG("adsz: We're in boot_image_check now...");
+
 #if (BOOT_IMAGE_NUMBER == 1)
     (void)state;
 #endif
@@ -849,27 +852,45 @@ boot_image_check(struct boot_loader_state *state, struct image_header *hdr,
 #if defined(MCUBOOT_ENC_IMAGES) && !defined(MCUBOOT_RAM_LOAD)
     if (MUST_DECRYPT(fap, BOOT_CURR_IMG(state), hdr)) {
 #if defined(MCUBOOT_SWAP_USING_OFFSET) && defined(MCUBOOT_SERIAL_RECOVERY)
+        BOOT_LOG_DBG("adsz: something with decryption or ram loading...");
         rc = boot_enc_load(state, 1, hdr, fap, bs, 0);
 #else
+        BOOT_LOG_DBG("adsz: or something else...");
         rc = boot_enc_load(state, 1, hdr, fap, bs);
 #endif
         if (rc < 0) {
+            BOOT_LOG_DBG("adsz: failed to load it?");
             FIH_RET(fih_rc);
         }
         if (rc == 0 && boot_enc_set_key(BOOT_CURR_ENC(state), 1, bs)) {
+            BOOT_LOG_DBG("adsz: some stuff with encryption key...");
             FIH_RET(fih_rc);
         }
     }
 #endif
 
 #if defined(MCUBOOT_SWAP_USING_OFFSET) && defined(MCUBOOT_SERIAL_RECOVERY)
+    BOOT_LOG_DBG("adsz: calling first bootutil_img_validate...");
     FIH_CALL(bootutil_img_validate, fih_rc, state, hdr, fap, tmpbuf, BOOT_TMPBUF_SZ,
              NULL, 0, NULL, 0);
 #else
+    BOOT_LOG_DBG("adsz: calling second bootutil_img_validate...");
     FIH_CALL(bootutil_img_validate, fih_rc, state, hdr, fap, tmpbuf, BOOT_TMPBUF_SZ,
              NULL, 0, NULL);
+
+    if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+      BOOT_LOG_DBG("adsz: FAILED, TRY AGAIN!");
+      const uint8_t seconds = 60;
+      BOOT_LOG_INF("adsz: Give it another try in %d seconds...", seconds);
+      // k_busy_wait(seconds * 1000); 
+      k_busy_wait(seconds * 1000 * 1000); 
+      BOOT_LOG_INF("adsz: ...and now check again");
+      FIH_CALL(bootutil_img_validate, fih_rc, state, hdr, fap, tmpbuf, BOOT_TMPBUF_SZ,
+             NULL, 0, NULL);
+    }
 #endif
 
+    BOOT_LOG_DBG("adsz: done with boot_image_check...");
     FIH_RET(fih_rc);
 }
 
@@ -1113,9 +1134,12 @@ boot_validate_slot(struct boot_loader_state *state, int slot,
 #endif
 
         /* No bootable image in slot; continue booting from the primary slot. */
+        BOOT_LOG_DBG("adsz: no bootable image in second slot");
         fih_rc = FIH_NO_BOOTABLE_IMAGE;
         goto out;
     }
+
+    BOOT_LOG_DBG("adsz: After header check...");
 
 #if defined(MCUBOOT_SWAP_USING_OFFSET)
     if (slot != BOOT_PRIMARY_SLOT && boot_status_is_reset(bs) &&
@@ -1126,34 +1150,46 @@ boot_validate_slot(struct boot_loader_state *state, int slot,
         struct image_header first_sector_hdr;
 
         if (flash_area_read(fap, 0, &first_sector_hdr, sizeof(first_sector_hdr))) {
+            BOOT_LOG_DBG("adsz: failed to read flash area?");
             FIH_RET(fih_rc);
         }
 
         if (first_sector_hdr.ih_magic == IMAGE_MAGIC) {
             BOOT_LOG_ERR("Secondary header magic detected in first sector, wrong upload address?");
+            BOOT_LOG_DBG("adsz: no bootable image - wrong slot"); 
             fih_rc = FIH_NO_BOOTABLE_IMAGE;
             goto check_validity;
         }
     }
 #endif
 
+    BOOT_LOG_DBG("adsz: After A...");
+
 #if defined(MCUBOOT_OVERWRITE_ONLY) && defined(MCUBOOT_DOWNGRADE_PREVENTION)
+  
+    BOOT_LOG_DBG("adsz: overwrite only and downgrade prevention...");
     if (slot != BOOT_PRIMARY_SLOT) {
+        
+        BOOT_LOG_DBG("adsz: secondary slot...");
         int rc;
 
         /* Check if version of secondary slot is sufficient */
 
 #if defined(CONFIG_SOC_NRF5340_CPUAPP) && defined(CONFIG_NRF53_MULTI_IMAGE_UPDATE) \
     && defined(CONFIG_PCD_APP) && defined(CONFIG_PCD_READ_NETCORE_APP_VERSION)
+        BOOT_LOG_DBG("adsz: some crazy condition...");
         if (BOOT_CURR_IMG(state) == CONFIG_MCUBOOT_NETWORK_CORE_IMAGE_NUMBER) {
+          BOOT_LOG_DBG("adsz: radio core?...");
             rc = pcd_version_cmp_net(fap, boot_img_hdr(state, BOOT_SECONDARY_SLOT));
         } else {
+            BOOT_LOG_DBG("adsz: app core?...");
              rc = boot_version_cmp(
                                  &boot_img_hdr(state, BOOT_SECONDARY_SLOT)->ih_ver,
                                  &boot_img_hdr(state, BOOT_PRIMARY_SLOT)->ih_ver);
 
 #if CONFIG_MCUBOOT_MCUBOOT_IMAGE_NUMBER != -1
             if (rc >= 0 && BOOT_CURR_IMG(state) == CONFIG_MCUBOOT_MCUBOOT_IMAGE_NUMBER) {
+              BOOT_LOG_DBG("adsz: checking image number...");
                 /* Also check the new version of MCUboot against that of the current s0/s1 MCUboot
                  * trailer version to prevent downgrades
                  */
@@ -1164,15 +1200,18 @@ boot_validate_slot(struct boot_loader_state *state, int slot,
 
                 /* Only update rc if the currently running version is newer */
                 if (version_check < rc) {
+                  BOOT_LOG_DBG("adsz: currently running version is newer...");
                     rc = version_check;
                 }
             }
 #endif
         }
 #else
+  BOOT_LOG_DBG("adsz: compare versions in both lots...");
 	rc = boot_version_cmp(
 			&boot_img_hdr(state, BOOT_SECONDARY_SLOT)->ih_ver,
 			&boot_img_hdr(state, BOOT_PRIMARY_SLOT)->ih_ver);
+
 
 #if CONFIG_MCUBOOT_MCUBOOT_IMAGE_NUMBER != -1
         if (rc >= 0 && BOOT_CURR_IMG(state) == CONFIG_MCUBOOT_MCUBOOT_IMAGE_NUMBER) {
@@ -1181,41 +1220,56 @@ boot_validate_slot(struct boot_loader_state *state, int slot,
              */
             int version_check;
 
+            BOOT_LOG_DBG("adsz: here we go again...");
             version_check = boot_version_cmp(&boot_img_hdr(state, BOOT_SECONDARY_SLOT)->ih_ver,
                                              &mcuboot_s0_s1_image_version);
 
             /* Only update rc if the currently running version is newer */
             if (version_check < rc) {
+                BOOT_LOG_DBG("adsz: I've seen it before...");
                 rc = version_check;
             }
         }
 #endif
 #endif
+
+         BOOT_LOG_DBG("adsz: check if image in second slot satisfies version requirement...");
         if (rc < 0 && boot_check_header_erased(state, BOOT_PRIMARY_SLOT)) {
             BOOT_LOG_ERR("insufficient version in secondary slot");
+            BOOT_LOG_INF("adsz: about to call first boot_scramble_slot");
             boot_scramble_slot(fap, slot);
             /* Image in the secondary slot does not satisfy version requirement.
              * Erase the image and continue booting from the primary slot.
              */
+            BOOT_LOG_DBG("adsz: no bootable image...");
             fih_rc = FIH_NO_BOOTABLE_IMAGE;
             goto out;
         }
     }
 #endif
     if (!boot_is_header_valid(hdr, fap, state)) {
+
+        BOOT_LOG_DBG("adsz: invalid header...");
         fih_rc = FIH_FAILURE;
     } else {
+        BOOT_LOG_DBG("adsz: header seems to be valid...");
         BOOT_HOOK_CALL_FIH(boot_image_check_hook, FIH_BOOT_HOOK_REGULAR,
                            fih_rc, BOOT_CURR_IMG(state), slot);
         if (FIH_EQ(fih_rc, FIH_BOOT_HOOK_REGULAR)) {
+            BOOT_LOG_DBG("adsz: is it the real check I'm interrested in?...");
             FIH_CALL(boot_image_check, fih_rc, state, hdr, fap, bs);
         }
     }
+BOOT_LOG_DBG("adsz: before check_validity label (no goto)");
+
 #if defined(MCUBOOT_SWAP_USING_OFFSET)
 check_validity:
+BOOT_LOG_DBG("adsz: under check_validity label");
 #endif
     if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+        BOOT_LOG_DBG("adsz: too late?");
         if ((slot != BOOT_PRIMARY_SLOT) || ARE_SLOTS_EQUIVALENT()) {
+            BOOT_LOG_INF("adsz: about to call second boot_scramble_slot");
             boot_scramble_slot(fap, slot);
             /* Image is invalid, erase it to prevent further unnecessary
              * attempts to validate and boot it.
@@ -1225,10 +1279,13 @@ check_validity:
 #if !defined(__BOOTSIM__)
         BOOT_LOG_ERR("Image in the %s slot is not valid!",
                      (slot == BOOT_PRIMARY_SLOT) ? "primary" : "secondary");
+        BOOT_LOG_ERR("adsz: ZONK!");
 #endif
         fih_rc = FIH_NO_BOOTABLE_IMAGE;
         goto out;
     }
+
+BOOT_LOG_DBG("adsz: Is image considered ok now?");
 
 #if MCUBOOT_IMAGE_NUMBER > 1 && !defined(MCUBOOT_ENC_IMAGES) && defined(MCUBOOT_VERIFY_IMG_ADDRESS)
     /* Verify that the image in the secondary slot has a reset address
@@ -1308,6 +1365,7 @@ check_validity:
              *
              * Erase the image and continue booting from the primary slot.
              */
+            BOOT_LOG_INF("adsz: about to call third boot_scramble_slot");
             boot_scramble_slot(fap, slot);
             fih_rc = FIH_NO_BOOTABLE_IMAGE;
             goto out;
@@ -1616,6 +1674,7 @@ boot_validated_swap_type(struct boot_loader_state *state,
         /* Boot loader wants to switch to the secondary slot.
          * Ensure image is valid.
          */
+        BOOT_LOG_INF("adsz: about to call first boot_validate_slot");
         FIH_CALL(boot_validate_slot, fih_rc, state, BOOT_SECONDARY_SLOT, bs, swap_type);
         if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
             if (FIH_EQ(fih_rc, FIH_NO_BOOTABLE_IMAGE)) {
@@ -2350,6 +2409,7 @@ boot_perform_update(struct boot_loader_state *state, struct boot_status *bs)
      */
     FIH_DECLARE(fih_rc, FIH_FAILURE);
     rc = boot_check_header_erased(state, BOOT_PRIMARY_SLOT);
+    BOOT_LOG_INF("adsz: about to call second boot_validate_slot");
     FIH_CALL(boot_validate_slot, fih_rc, state, BOOT_PRIMARY_SLOT, bs, 0);
     if (rc == 0 || FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
         rc = boot_copy_image(state, bs);
@@ -2655,6 +2715,7 @@ boot_prepare_image_for_update(struct boot_loader_state *state,
             if (bs->swap_type == BOOT_SWAP_TYPE_NONE) {
                 BOOT_SWAP_TYPE(state) = boot_validated_swap_type(state, bs);
             } else {
+                BOOT_LOG_INF("adsz: about to call third boot_validate_slot");
                 FIH_CALL(boot_validate_slot, fih_rc,
                          state, BOOT_SECONDARY_SLOT, bs, 0);
                 if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
@@ -2677,12 +2738,15 @@ boot_prepare_image_for_update(struct boot_loader_state *state,
                  * sure it's not OK.
                  */
                 rc = boot_check_header_erased(state, BOOT_PRIMARY_SLOT);
+                BOOT_LOG_INF("adsz: about to call fourth boot_validate_slot");
                 FIH_CALL(boot_validate_slot, fih_rc,
                          state, BOOT_PRIMARY_SLOT, bs, 0);
 
                 if (rc == 0 || FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
 
                     rc = (boot_img_hdr(state, BOOT_SECONDARY_SLOT)->ih_magic == IMAGE_MAGIC) ? 1: 0;
+
+                    BOOT_LOG_INF("adsz: about to call fifth boot_validate_slot");
                     FIH_CALL(boot_validate_slot, fih_rc,
                              state, BOOT_SECONDARY_SLOT, bs, 0);
 
@@ -2815,6 +2879,7 @@ check_downgrade_prevention(struct boot_loader_state *state)
     if (rc < 0) {
         /* Image in slot 0 prevents downgrade, delete image in slot 1 */
         BOOT_LOG_INF("Image %d in slot 1 erased due to downgrade prevention", BOOT_CURR_IMG(state));
+        BOOT_LOG_INF("adsz: about to call fourth boot_scramble_slot");
         boot_scramble_slot(BOOT_IMG_AREA(state, 1), BOOT_SECONDARY_SLOT);
     } else {
         rc = 0;
@@ -3086,6 +3151,7 @@ context_boot_go(struct boot_loader_state *state, struct boot_rsp *rsp)
         if (!image_validated_by_nsib)
 #endif
         {
+            BOOT_LOG_INF("adsz: about to call sixth boot_validate_slot");
             FIH_CALL(boot_validate_slot, fih_rc, state, BOOT_PRIMARY_SLOT, NULL, 0);
             /* Check for all possible values is redundant in normal operation it
              * is meant to prevent FI attack.
@@ -3506,8 +3572,17 @@ boot_load_and_validate_images(struct boot_loader_state *state)
             }
 #endif /* MCUBOOT_RAM_LOAD */
 
+            BOOT_LOG_INF("adsz: about to call seventh boot_validate_slot");
             FIH_CALL(boot_validate_slot, fih_rc, state, active_slot, NULL, 0);
             if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+              // const uint8_t seconds = 60;
+              // BOOT_LOG_INF("adsz: Give it another try in %d seconds...", seconds);
+              // k_busy_wait(seconds * 1000); 
+              // BOOT_LOG_INF("adsz: ...and now check again");
+              // FIH_CALL(boot_validate_slot, fih_rc, state, active_slot, NULL, 0);
+              BOOT_LOG_WRN("adsz: Here was initial attepmt to retry");
+
+
                 /* Image is invalid. */
 #ifdef MCUBOOT_RAM_LOAD
                 boot_remove_image_from_sram(state);
@@ -3583,6 +3658,15 @@ context_boot_go(struct boot_loader_state *state, struct boot_rsp *rsp)
     while (true) {
 #endif
         FIH_CALL(boot_load_and_validate_images, fih_rc, state);
+// --------------------------------------------------------
+        if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+          const uint8_t seconds = 60;
+          BOOT_LOG_INF("adsz: Give it another try in %d seconds...", seconds);
+          k_busy_wait(seconds * 1000); 
+          BOOT_LOG_INF("adsz: ...and now check again");
+          FIH_CALL(boot_load_and_validate_images, fih_rc, state);
+        }
+// --------------------------------------------------------
         if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
             FIH_SET(fih_rc, FIH_FAILURE);
             goto out;

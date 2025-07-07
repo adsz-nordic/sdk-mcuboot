@@ -505,6 +505,7 @@ bootutil_img_validate(struct boot_loader_state *state,
 #endif
                      )
 {
+  BOOT_LOG_DBG("adsz: We're in image_validate.c, bootutil_img_validate now...");
 #if (defined(EXPECTED_KEY_TLV) && defined(MCUBOOT_HW_KEY)) || defined(MCUBOOT_HW_ROLLBACK_PROT) || defined(MCUBOOT_DECOMPRESS_IMAGES)
     int image_index = (state == NULL ? 0 : BOOT_CURR_IMG(state));
 #endif
@@ -551,6 +552,7 @@ bootutil_img_validate(struct boot_loader_state *state,
 
     BOOT_LOG_DBG("bootutil_img_validate: flash area %p", fap);
 #ifdef MCUBOOT_DECOMPRESS_IMAGES
+    BOOT_LOG_DBG("adsz: decompression stuff...");
     /* If the image is compressed, the integrity of the image must also be validated */
     if (MUST_DECOMPRESS(fap, image_index, hdr)) {
         bool found_decompressed_size = false;
@@ -611,25 +613,31 @@ bootutil_img_validate(struct boot_loader_state *state,
         }
     }
 #endif
+    BOOT_LOG_DBG("adsz: no decompression stuff...");
 
 #if defined(EXPECTED_HASH_TLV) && !defined(MCUBOOT_SIGN_PURE)
 #if defined(MCUBOOT_SWAP_USING_OFFSET) && defined(MCUBOOT_SERIAL_RECOVERY)
+    BOOT_LOG_DBG("adsz: first hash option...");
     rc = bootutil_img_hash(state, hdr, fap, tmp_buf, tmp_buf_sz, hash, seed, seed_len,
                            start_offset);
 #else
+    BOOT_LOG_DBG("adsz: second hash option...");
     rc = bootutil_img_hash(state, hdr, fap, tmp_buf, tmp_buf_sz, hash, seed, seed_len);
 #endif
     if (rc) {
+        BOOT_LOG_DBG("adsz: hash zonk!...");
         goto out;
     }
 
     if (out_hash) {
+        BOOT_LOG_DBG("adsz: copyting hash...");
         memcpy(out_hash, hash, IMAGE_HASH_SIZE);
     }
 #endif
 
 #if defined(MCUBOOT_SIGN_PURE)
     /* If Pure type signature is expected then it has to be there */
+    BOOT_LOG_DBG("adsz: purosangue...");
     rc = bootutil_check_for_pure(hdr, fap);
     if (rc != 0) {
         BOOT_LOG_DBG("bootutil_img_validate: pure expected");
@@ -639,14 +647,18 @@ bootutil_img_validate(struct boot_loader_state *state,
 
 #if defined(MCUBOOT_SWAP_USING_OFFSET)
 #if defined(MCUBOOT_SERIAL_RECOVERY)
+    BOOT_LOG_DBG("adsz: first offset...");
     it.start_off = boot_get_state_secondary_offset(state, fap) + start_offset;
 #else
+    BOOT_LOG_DBG("adsz: second offset...");
     it.start_off = boot_get_state_secondary_offset(state, fap);
 #endif
 #endif
 
+    BOOT_LOG_DBG("adsz: tlv stuff...");
     rc = bootutil_tlv_iter_begin(&it, hdr, fap, IMAGE_TLV_ANY, false);
     if (rc) {
+        BOOT_LOG_DBG("adsz: tlv stuff zonk...");
         BOOT_LOG_DBG("bootutil_img_validate: TLV iteration failed %d", rc);
         goto out;
     }
@@ -669,6 +681,7 @@ bootutil_img_validate(struct boot_loader_state *state,
      * and are able to do.
      */
     while (true) {
+        BOOT_LOG_DBG("adsz: while loop...");
         rc = bootutil_tlv_iter_next(&it, &off, &len, &type);
         if (rc < 0) {
             goto out;
@@ -677,6 +690,7 @@ bootutil_img_validate(struct boot_loader_state *state,
         }
 
 #ifndef ALLOW_ROGUE_TLVS
+        BOOT_LOG_DBG("adsz: playing rogue?...");
         /*
          * Ensure that the non-protected TLV only has entries necessary to hold
          * the signature.  We also allow encryption related keys to be in the
@@ -697,23 +711,28 @@ bootutil_img_validate(struct boot_loader_state *state,
              }
         }
 #endif
+        BOOT_LOG_DBG("adsz: not playing rogue?...");
         switch(type) {
 #if defined(EXPECTED_HASH_TLV) && !defined(MCUBOOT_SIGN_PURE)
         case EXPECTED_HASH_TLV:
         {
+            BOOT_LOG_DBG("adsz: type one...");
             BOOT_LOG_DBG("bootutil_img_validate: EXPECTED_HASH_TLV == %d", EXPECTED_HASH_TLV);
             /* Verify the image hash. This must always be present. */
             if (len != sizeof(hash)) {
+                BOOT_LOG_DBG("adsz: no hash, no fun...");
                 rc = -1;
                 goto out;
             }
             rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, sizeof(hash));
             if (rc) {
+                BOOT_LOG_DBG("adsz: failed to load data...");
                 goto out;
             }
 
             FIH_CALL(boot_fih_memequal, fih_rc, hash, buf, sizeof(hash));
             if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+                BOOT_LOG_DBG("adsz: no memequal...");
                 FIH_SET(fih_rc, FIH_FAILURE);
                 goto out;
             }
@@ -726,6 +745,7 @@ bootutil_img_validate(struct boot_loader_state *state,
 #ifdef EXPECTED_KEY_TLV
         case EXPECTED_KEY_TLV:
         {
+            BOOT_LOG_DBG("adsz: type two...");
             BOOT_LOG_DBG("bootutil_img_validate: EXPECTED_KEY_TLV == %d", EXPECTED_KEY_TLV);
             /*
              * Determine which key we should be checking.
@@ -758,6 +778,7 @@ bootutil_img_validate(struct boot_loader_state *state,
 #ifdef EXPECTED_SIG_TLV
         case EXPECTED_SIG_TLV:
         {
+            BOOT_LOG_DBG("adsz: type three...");
             BOOT_LOG_DBG("bootutil_img_validate: EXPECTED_SIG_TLV == %d", EXPECTED_SIG_TLV);
 #if !defined(CONFIG_BOOT_SIGNATURE_USING_KMU)
             /* Ignore this signature if it is out of bounds. */
@@ -793,6 +814,7 @@ bootutil_img_validate(struct boot_loader_state *state,
 #ifdef MCUBOOT_HW_ROLLBACK_PROT
         case IMAGE_TLV_SEC_CNT:
         {
+            BOOT_LOG_DBG("adsz: type four...");
             /*
              * Verify the image's security counter.
              * This must always be present.
@@ -838,35 +860,44 @@ skip_security_counter_read:
         }
     }
 
+BOOT_LOG_DBG("adsz: after while loop...");
+
 #if defined(EXPECTED_HASH_TLV) && !defined(MCUBOOT_SIGN_PURE)
     rc = !image_hash_valid;
     if (rc) {
+        BOOT_LOG_DBG("adsz: buba one...");
         goto out;
     }
 #elif defined(MCUBOOT_SIGN_PURE)
     /* This returns true on EQ, rc is err on non-0 */
     rc = FIH_NOT_EQ(valid_signature, FIH_SUCCESS);
+        BOOT_LOG_DBG("adsz: buba two...");
 #endif
 #ifdef EXPECTED_SIG_TLV
     FIH_SET(fih_rc, valid_signature);
+        BOOT_LOG_DBG("adsz: buba three...");
 #endif
 #ifdef MCUBOOT_HW_ROLLBACK_PROT
     if (FIH_EQ(security_counter_should_be_present, FIH_FAILURE)) {
+        BOOT_LOG_DBG("adsz: rollback stuff...");
         goto skip_security_counter_check;
     }
 
     if (FIH_NOT_EQ(security_counter_valid, FIH_SUCCESS)) {
+        BOOT_LOG_DBG("adsz: security counter zonk...");
         rc = -1;
         goto out;
     }
 
 skip_security_counter_check:
+        BOOT_LOG_DBG("adsz: f**k security...");
 #endif
 
 #ifdef MCUBOOT_DECOMPRESS_IMAGES
     /* Only after all previous verifications have passed, perform a dry-run of the decompression
      * and ensure the image is valid
      */
+        BOOT_LOG_DBG("adsz: some more decompression fancy stuff...");
     if (!rc && MUST_DECOMPRESS(fap, image_index, hdr)) {
         image_hash_valid = 0;
         FIH_SET(valid_signature, FIH_FAILURE);
@@ -1017,6 +1048,8 @@ skip_security_counter_check:
 #endif
 
 #ifdef EXPECTED_SIG_TLV
+
+    BOOT_LOG_DBG("adsz: some valid_signature setting...");
     FIH_SET(fih_rc, valid_signature);
 #endif
 
@@ -1025,5 +1058,7 @@ out:
         FIH_SET(fih_rc, FIH_FAILURE);
     }
 
+
+    BOOT_LOG_DBG("adsz: We're leaving bootutil_img_validate now...");
     FIH_RET(fih_rc);
 }
